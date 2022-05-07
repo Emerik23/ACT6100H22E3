@@ -1,0 +1,102 @@
+---
+title: "Tp_6100"
+output: html_document
+---
+
+
+#Introduction 
+
+Nous sommes le directeur général d'une équipe de basketball et nous désirons signer un nouveau contrat
+avec un ancien joueur de la formation (joueur fictif que nous avons créé).
+
+Pour ce faire, nous utiliserons la base de données nba_data.csv, qui comporte les statistiques 
+de tous les joueurs des années passées ainsi que leur salaire pour chaque année correspondante.
+
+À partir de ces statistiques, nous allons créer deux modèles qui vont nous permettre d'estimer le nouveau salaire de notre joueur à signer.
+
+#Les données
+
+Après la lecture de notre data frame, nous constatons que toutes les statistiques présentes
+dans le document qui nous serviront de variables explicatives semblent être, à première vue, pertinentes et complètes, sauf le nom du joueur et son équipe. Nous retirons donc ces deux colonnes de notre data frame.
+
+Aussi, nous choisissons de seulement conserver les données des années 2015, 2016 et 2017, afin d'avoir un modèle plus représentatif des salaires actuels (inflation, augmentation de la masse salariale, etc.) Nous retirons ensuite la colonne de l'année, qui ne nous apparaît pas pertinente.
+
+```{r data, include=TRUE}
+df <- read.csv("C:\\Users\\Max-PC\\Documents\\École\\ACT 6100\\nba_data.csv")
+rownames(df) <- NULL
+
+data <- df[ (df$Year %in% c(2015,2016,2017)),]
+data_skimmed <- data[,-c(1,2,3)]
+```
+
+En terme de nettoyage des données, nous omettrons les joueurs dont le salaire est de 0, puisque cela indique que l'information est manquante, ce qui fausserait nos données. Par contre, il est important de conserver les valeurs de 0 des autres variables, puisque des statistiques de 0 au basketball sont possibles et seront signifatives pour l'application de nos modèles. Dans ce cas, seuls les joueurs ayant des statistiques "NA" seront retirés.
+
+```{r data final, include=TRUE}
+data_skimmed2 <- data_skimmed[data_skimmed$Salary != 0, ]
+
+any(is.na(data_skimmed2))
+data_final <- na.omit(data_skimmed2)
+```
+
+Voici donc les dimensions de notre base de données finale et nettoyée :
+
+```{r data dim, include=TRUE}
+
+dim(data_final)
+
+```
+
+#Statistique descriptive
+
+L'ensemble des données sont de type numérique, sauf la position des joueurs, qui est une variable catégorielle. Voici donc les variables de notre base de données :
+
+```{r data nom variables, include=TRUE}
+colnames(data_final) <- c("Salary","Position","Age","Games played","Games started",
+                            "Player efficiency rating","True shooting percentage",
+                            "Percentage of field goal attemps from 3-point range",
+                            "Number of free throw attempts per field goal attempt",
+                            "Offensive rebound percentage", "Defensive rebound percentage",
+                            "Total rebound percentage", "Assists percentage", "Steal percentage",
+                            "Block percentage", "Turnover percentage", "Usage percentage",
+                            "Offensive win shares", "Defensive win shares", "Win shares",
+                            "Win shares per minute", "Offensive box plus minus",
+                            "Defensive box plus minus", "Box plus minus", "Value over replacement player",
+                            "Field goal percentage", "3-point percentage", "2-point percentage",
+                            "Effective field goal percentage", "Free throw percentage", 
+                            "Minutes played per game", "Field goals per game",
+                            "Field goal attempts per game", "3 points per game", "3-point attempts per game",
+                            "2 points per game", "2-point attempts per game", "Free throws per game",
+                            "Free throw attempts per game", "Offensive rebounds per game",
+                            "Defensive rebounds per game", "Total rebounds per game",
+                            "Assists per game", "Steals per game", "Blocks per game", "Turnovers per game",
+                            "Personal fouls per game", "Points per game")
+colnames(data_final)
+```
+
+Nous assignerons un numéro d'identification à chaque joueur, de 1 à 1268, afin de préserver l'anonymité de chacun.
+
+```{r lignes, include=TRUE}
+rownames(data_final) <- c(1:length(data_final$Salary))
+```
+
+Voici un résumé de la distribution des différentes variables de notre base de données, afin d'avoir une idée globale. La varibale catégorielle "Position" est traitée séparemment, puisqu'il s'agit d'une variable catégorielle.
+
+```{r summary, include=TRUE}
+summary(data_final)
+table(data_final$Position)
+```
+
+Tout d'abord, on remarque que les joueurs de notre base de données sont bien répartis en terme de position, sauf pour la position de centre, qui semble plus rare. Il pourrait être intéressant de voir si cette rareté à une influence sur le salaire de ces joueurs de centre.
+
+Ensuite, une simple vérification des sommaires des données nous permet de conclure qu'il ne semble pas y avoir de données inexplicables ou ayant des valeurs disproportionnées ou incohérentes.
+
+Il peut tout de même être intéressant de tracer un nuage de points des salaires, vu le salaire annuel maximal à près de 30 millions de dollars, ce qui pourrait paraître exagéré.
+
+```{r plot salaires, echo=FALSE}
+plot(c(1:length(data_final$Salary)),data_final$Salary, main = "Distribution des salaires annuels",
+     xlab = "Numéro d'identification du joueur selon la base de données", ylab = "Salaire annuel")
+```
+
+Nous pouvons observer une distribution attendue des salaires, c'est-à-dire un grand nombre de joueurs lorsqu'il est question de "petits" salaires, et un nombre de plus en plus petit à mesure que le salaire annuel augmente.
+
+Après vérification dans la base de données originale, nous confirmons que le salaire maximal de plus de 30 millions de dollars correspond à LeBron James, une véritable vedette de la NBA, et donc cela confirme la validité de cette valeur aberrante.
