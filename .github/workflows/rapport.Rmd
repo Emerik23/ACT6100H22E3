@@ -1,0 +1,258 @@
+---
+title: "TP_6100"
+authors : "Maxime Louis-Seize (LOUM22129809), Dalavanh Rasavady (RASD19559307) et Émerik Tessier (TESE23129901)"
+date : "10 mai 2022"
+output: html_document
+---
+
+```{r eval=FALSE}
+if("rmarkdown" %in% rownames(installed.packages()) == FALSE){
+  install.packages("rmarkdown")
+}
+if("glmnet" %in% rownames(installed.packages()) == FALSE){
+  install.packages("glmnet")
+}
+if("pls" %in% rownames(installed.packages()) == FALSE){
+  install.packages("pls")
+}
+```
+
+# Introduction 
+
+Nous sommes le directeur général d'une équipe de basketball et nous désirons signer un nouveau contrat avec un ancien joueur de la formation (joueur fictif que nous avons créé).
+
+Pour ce faire, nous utiliserons la base de données nba_data.csv, qui comporte les statistiques de tous les joueurs des années passées ainsi que leur salaire pour chaque année correspondante.
+
+À partir de ces statistiques, nous allons créer deux modèles qui vont nous permettre d'estimer le nouveau salaire de notre joueur à signer.
+
+# Les données
+
+Après la lecture de notre data frame, nous constatons que toutes les statistiques présentes
+dans le document qui nous serviront de variables explicatives semblent être, à première vue, pertinentes et complètes, sauf le nom du joueur et son équipe. Nous retirons donc ces deux colonnes de notre data frame.
+
+Aussi, nous choisissons de seulement conserver les données des années 2015, 2016 et 2017, afin d'avoir un modèle plus représentatif des salaires actuels (inflation, augmentation de la masse salariale, etc.) Nous retirons ensuite la colonne de l'année, qui ne nous apparaît pas pertinente.
+
+```{r data, include=TRUE}
+df <- read.csv("https://raw.githubusercontent.com/Emerik23/ACT6100H22E3/rapport_remis/donnees.csv")
+rownames(df) <- NULL
+
+data <- df[ (df$Year %in% c(2015,2016,2017)),]
+data_skimmed <- data[,-c(1,2,3)]
+```
+
+En terme de nettoyage des données, nous omettrons les joueurs dont le salaire est de 0, puisque cela indique que l'information est manquante, ce qui fausserait nos données. Par contre, il est important de conserver les valeurs de 0 des autres variables, puisque des statistiques de 0 au basketball sont possibles et seront signifatives pour l'application de nos modèles. Dans ce cas, seuls les joueurs ayant des statistiques "NA" seront retirés.
+
+```{r data final, include=TRUE}
+data_skimmed2 <- data_skimmed[data_skimmed$Salary != 0, ]
+
+any(is.na(data_skimmed2))
+data_final <- na.omit(data_skimmed2)
+```
+
+Voici donc les dimensions de notre base de données finale et nettoyée :
+
+```{r data dim, include=TRUE}
+
+dim(data_final)
+
+```
+
+# Statistique descriptive
+
+L'ensemble des données sont de type numériques, sauf la position des joueurs, qui est une variable catégorielle. Voici donc les variables de notre base de données :
+
+```{r data nom variables, include=TRUE}
+colnames(data_final) <- c("Salary","Position","Age","Games played","Games started",
+                            "Player efficiency rating","True shooting percentage",
+                            "Percentage of field goal attemps from 3-point range",
+                            "Number of free throw attempts per field goal attempt",
+                            "Offensive rebound percentage", "Defensive rebound percentage",
+                            "Total rebound percentage", "Assists percentage", "Steal percentage",
+                            "Block percentage", "Turnover percentage", "Usage percentage",
+                            "Offensive win shares", "Defensive win shares", "Win shares",
+                            "Win shares per minute", "Offensive box plus minus",
+                            "Defensive box plus minus", "Box plus minus", "Value over replacement player",
+                            "Field goal percentage", "3-point percentage", "2-point percentage",
+                            "Effective field goal percentage", "Free throw percentage", 
+                            "Minutes played per game", "Field goals per game",
+                            "Field goal attempts per game", "3 points per game", "3-point attempts per game",
+                            "2 points per game", "2-point attempts per game", "Free throws per game",
+                            "Free throw attempts per game", "Offensive rebounds per game",
+                            "Defensive rebounds per game", "Total rebounds per game",
+                            "Assists per game", "Steals per game", "Blocks per game", "Turnovers per game",
+                            "Personal fouls per game", "Points per game")
+colnames(data_final)
+```
+
+Nous assignerons un numéro d'identification à chaque joueur, de 1 à 1268, afin de préserver l'anonymat de chacun.
+
+```{r lignes, include=TRUE}
+rownames(data_final) <- c(1:length(data_final$Salary))
+```
+
+Voici un résumé de la distribution des différentes variables de notre base de données, afin d'avoir une idée globale. La variable catégorielle "Position" est traitée séparemment, puisqu'il s'agit d'une variable catégorielle.
+
+```{r summary, include=TRUE}
+summary(data_final)
+table(data_final$Position)
+```
+
+Tout d'abord, on remarque que les joueurs de notre base de données sont bien répartis en terme de position, sauf pour la position de centre, qui semble plus rare. Il pourrait être intéressant de voir si cette rareté a une influence sur le salaire de ces joueurs de centre.
+
+Ensuite, une simple vérification des sommaires des données nous permet de conclure qu'il ne semble pas y avoir de données inexplicables ou ayant des valeurs disproportionnées ou incohérentes.
+
+Il peut tout de même être intéressant de tracer un nuage de points des salaires, vu le salaire annuel maximal à près de 30 millions de dollars, ce qui pourrait paraître exagéré.
+
+```{r plot salaires, echo=FALSE}
+plot(c(1:length(data_final$Salary)),data_final$Salary, main = "Distribution des salaires annuels",
+     xlab = "Numéro d'identification du joueur selon la base de données", ylab = "Salaire annuel")
+```
+
+Nous pouvons observer une distribution attendue des salaires, c'est-à-dire un grand nombre de joueurs lorsqu'il est question de "petits" salaires, et un nombre de plus en plus petit à mesure que le salaire annuel augmente.
+
+Après vérification dans la base de données originale, nous confirmons que le salaire maximal de plus de 30 millions de dollars correspond à celui de LeBron James, une véritable vedette de la NBA, et donc cela confirme la validité de cette valeur aberrante (data.world, 2022).
+
+Avant d'établir nos modèles, nous commençons par fractionner nos données dans des ensembles de test et d'entrainement. Pour ce faire, on utilise la validation croisée k-fold, c'est-à-dire que répartie aléatoirement les données dans ces deux ensembles de manière égale.
+On utilise la fonction model.matrix pour convertir notre variable catégorielle en variable dummy variables car elle n'était pas numérique. On utilise également le seed 6100 pour que nos résultats puissent être valider par n'importe qui à tout moment (James, Witten, Hastie et Tibshirani, 2021).
+
+```{r eval=FALSE}
+set.seed(6100)
+x <- model.matrix(data_final$Salary ~ ., data_final)[, -1]
+y <- data_final$Salary
+train <- sample(1: nrow(x), nrow(x) / 2)
+test <- (-train)
+y.test <- y[test]
+```
+
+# Modèles
+
+Nous cherchons à prédire le salaire futur de notre joueur. Nous optons donc pour deux modèles supervisés. De plus, nos données comprennent plusieurs variables explicatives. Il serait donc intéressant de comparer les deux modèles supervisés suivants : la régression de Lasso et la régression par l'ACP. 
+
+Ces deux modèles semble être pertinents pour notre situation car plusieurs facteurs peuvent venir influencer le salaire d'un joueur. 
+Étant donné la grande quantité de données existantes sur chaque joueur, on serait porté de croire qu'il ne faut pas tenir compte de tous les facteurs (dans ce cas-ci, 47 variables dont une catégorielle) pour évaluer le salaire d'un athlète, mais que certains facteurs sont plus importants que d'autres (d'où la possibilité d'avoir des coefficients faibles autour de 0).
+On pourrait donc croire que dans le basket-ball, certaines statistiques détenues sur les joueurs ne sont pas très importantes et ne devraient pas nécessairement avoir de poids sur le salaire d'un joueur. Il faut donc déterminer quelles variables sont les plus pertinentes et déterminantes pour le salaire des joueurs.
+
+En utilisant les régression de Lasso et par l'ACP, on pourra alors comparer une méthode qui régularise les variables avec une méthode qui réduit les dimensions de notre modèle. On pourra alors comparer les deux méthodes et voir si les deux modèles arrivent aux mêmes coefficients de variables nuls pour le calcul des salaires.
+
+## Régression de Lasso 
+
+Avant d'estimer les coefficients du modèle de régression de Lasso, on commence par déterminer le paramètre de "tuning" qui va minimiser l'erreur quadratique moyenne de notre ensemble d'entrainement à l'aide du package glmnet.
+Pour ce faire, on choisit une grosse grille de valeurs de lambda pour couvrir le plus de scénarios possibles.
+
+```{r echo = TRUE}
+set.seed(6100)
+x <- model.matrix(data_final$Salary ~ ., data_final)[, -1]
+y <- data_final$Salary
+train <- sample(1: nrow(x), nrow(x) / 2)
+test <- (-train)
+y.test <- y[test]
+
+library(glmnet)
+
+grid <- 10^seq(10, -2, length = 100)
+modele_lasso <- glmnet(x[train,], y[train], alpha=1, lambda=grid)
+cv.out <- cv.glmnet(x[train,], y[train], alpha=1)
+plot(cv.out)
+```
+  
+On remarque que l'erreur quadratique moyenne sur la validation croisée semble être minimale lorsque log(lambda) est à peu près égal à 11.25, ce qui correspond bien à la valeur de lambda ci-dessous.
+
+```{r echo = TRUE}
+lambda <- cv.out$lambda.min
+lambda
+```
+
+On peut alors prédire les salaires de notre ensemble test à partir d'une régression de Lasso avec la valeur de lambda qu'on vient de calculer ci-dessus. 
+
+```{r echo = TRUE}
+prediction_lasso <- predict(modele_lasso, s=0, newx=x[test,])
+head(prediction_lasso)
+```
+
+Finalement, on peut obtenir les estimations des coefficients de notre modèle de régression de Lasso.
+
+```{r echo = TRUE}
+out <- glmnet(x, y, alpha=1, lambda = grid)
+coefficients_lasso <- predict(out, type = "coefficients", s=lambda)[1:51,]
+coefficients_lasso
+```
+
+On remarque que le modèle de régression de Lasso estime que 38 coefficients sur 51 sont nuls alors que 13 semblent être significatifs.
+D'ailleurs, à partir des données prédites, on peut obtenir l'erreur quadratique moyenne en comparant les valeurs prédites avec les valeurs réelles de la base de données test (James, Witten, Hastie et Tibshirani, 2021).
+
+```{r echo = TRUE}
+EQM_lasso <- mean((prediction_lasso - y.test)^2)
+EQM_lasso
+```
+
+## Régression par l'ACP
+
+On commence par déterminer le nombre de paramètres principaux M qui va minimiser l'erreur quadratique moyenne de notre ensemble d'entrainement.
+Pour ce faire, on choisit une grosse grille de valeurs de lambda pour couvrir le plus de scénarios possibles.
+
+```{r echo = TRUE}
+library(pls)
+modele_ACP <- pcr(data_final$Salary ~ ., data = data_final, subse = train, scale = TRUE, validation = "CV")
+validationplot(modele_ACP, val.type = "MSEP")
+```
+On remarque que l'erreur quadratique moyenne sur la validation croisée semble être à son minimum lorsque le modèle utilise 20 composantes principales.
+
+En utilisant la fonction summary() du modèle sur l'ensemble de données en entier, on voit bien que le pourcentage de variance expliquée augmente bien jusqu'à ce que le nombre de composantes soit égal à 20.
+
+```{r echo = TRUE}
+set.seed(6100)
+x <- model.matrix(data_final$Salary ~ ., data_final)[, -1]
+y <- data_final$Salary
+train <- sample(1: nrow(x), nrow(x) / 2)
+test <- (-train)
+y.test <- y[test]
+
+modele_ACP_fit <- pcr(y ~ x, scale = TRUE, ncomp = 20)
+summary(modele_ACP_fit)
+```
+
+On peut maintenant prédire les salaires de notre ensemble test avec M=20.
+
+```{r echo = TRUE}
+prediction_ACP <- predict(modele_ACP, x[test,], ncomp = 20)
+head(prediction_ACP)
+```
+
+Finalement, on peut également obtenir l'erreur quadratique moyenne en comparant les valeurs prédites avec les valeurs réelles de la base de données test (James, Witten, Hastie et Tibshirani, 2021).
+
+```{r echo = TRUE}
+EQM_ACP <- mean((prediction_ACP - y.test)^2)
+EQM_ACP
+```
+
+## Comparaison des modèles
+
+Il est à noter que le modèle de régression par l'ACP est plus dur à interpréter car il n'exprime par explicitement les variables à inclure dans le modèle (James, Witten, Hastie et Tibshirani, 2021). Pour cette raison, on pourrait plutôt être tenté d'utiliser le modèle de régression de Lasso pour modéliser le salaire de nos joueurs. On peut tout de même résumer les résultats obtenus dans le tableau ci-dessous.
+
+Régression de Lasso                      |  Régression par l'ACP
+---------------------------------------- | -------------------------------------
+Nombre de coefficients non nuls : 13     | Nombre de composantes principales inclus : 20
+Erreur quadratique moyenne : 1.45575e+13 | Erreur quadratique moyenne : 1.475186e+13
+
+On remarque que le modèle de régression de Lasso serait plus facile à utiliser que le modèle de régression par l'ACP étant donné que le nombre de composantes à inclure dans le modèle est inférieur (13 vs 20). Le calcul du salaire se ferait donc plus aisément.
+De plus, on remarque également que l'erreur quadratique moyenne obtenue avec le modèle de régression de Lasso est inférieure à celle obtenue par la régression par l'ACP. Les salaires calculés par le modèle de régression de Lasso serait donc plus justes.
+
+Pour toutes ces raisons, on opte plutôt pour le modèle de régression de Lasso pour modéliser le salaire futur de nos joueurs.
+
+# Conclusion
+
+Un des défis fut de trouver un type de base de données qui pourrait être adéquatement représenté par plusieurs modèles. Nous avons peu d'expérience dans le domaine de l'analyse de données alors à première vue, c'était difficile d'associer un type de données aux modèles vus en classe. 
+
+Un autre défi auquel nous avons fait face était de justifier qu'un modèle en particulier était adéquat pour nos données.  En effet, nous voulions initialement modéliser les données par une régression de Ridge. Toutefois, en faisant des tests pendant la modélisation, nous avons remarqué le modèle n'apportait pas d'avantage comparativement à un modéle de régression des moindres carrés, c'est-à-dire qu'un modèle de Ridge avec un lambda égal à 0 procurait une erreur quadratique moyenne plus petite. Nous nous sommes donc dit qu'une régression de Ridge n'était pas approprié pour notre modèle.
+
+La leçon que nous avons pu en tirer est qu'il faut bien connaitre les caractéristiques de chaque modèle pour faire un choix judicieux pour l'analyse des données. De plus, il est important de faire de la statistique descriptive et des tests de manières plus appronfondies pour bien comprendre nos données. Le fait de bien connaitre nos données et leurs caractéristiques, ceci pourrait alors nous guider dans le choix de modélisation.
+
+Nous aurions également aimé appliquer les modèles de clustering et d'arbre de décision à nos données. Il aurait été intéressant de déterminer quels attributs partagent les joueurs les mieux payés, de savoir à quel point les forces qu'ils ont en commun sont nombreux ainsi que le nombre de joueurs faisant partie de cette catégorie de joueurs à salaires élevés. Le modèle de clustering nous aurait permis d'obtenir ces informations.
+De plus, nous aurions aimé développer un arbre de décisions pour déterminer le salaire des joueurs. Étant donné qu'il s'agit d'un modèle qui est très facile à utiliser, il aurait été intéressant de le tester pour déterminer si les prédictions de salaires obtenus seraient bonnes malgré la simplicité du modèle.
+
+# Bibliographie
+
+data.world. (2022) _NBA Salaries_. Consulté en mai 2022, sur data.world: https://data.world/datasets/nba?fbclid=IwAR0HR0Sp_Rmbrr9kR9P1KSmktbhael8lALrfUAdTZj0E6CDEOF528eAA6ZQ
+
+James, G., Witten, D., Hastie, T., et Tibshirani, R. (2021) _An Introduction to Statistical Learning_ (2e éd.). Springer Texts in Statistics. https://doi.org/10.1007/978-1-0716-1418-1_1
+
